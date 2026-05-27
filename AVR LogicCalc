@@ -1,0 +1,564 @@
+#include <Keypad.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <math.h>
+
+
+// LCD
+
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// TECLADO 4x4
+
+
+const byte FILAS = 4;
+const byte COLUMNAS = 4;
+
+char teclas[FILAS][COLUMNAS] = {
+  {'1','2','3','+'},
+  {'4','5','6','-'},
+  {'7','8','9','*'},
+  {'C','0','=','/'}
+};
+
+byte pinesFilas[FILAS] = {9,8,7,6};
+byte pinesColumnas[COLUMNAS] = {5,4,3,2};
+
+Keypad teclado = Keypad(
+  makeKeymap(teclas),
+  pinesFilas,
+  pinesColumnas,
+  FILAS,
+  COLUMNAS
+);
+
+
+// VARIABLES
+
+
+String numero1 = "";
+String numero2 = "";
+
+int resultado = 0;
+
+char operacion = ' ';
+
+bool segundaParte = false;
+
+int memoria = 0;
+
+
+// SETUP
+
+void setup() {
+
+  Serial.begin(9600);
+
+  lcd.init();
+  lcd.backlight();
+
+  pantallaInicio();
+}
+
+
+// LOOP PRINCIPAL
+
+
+void loop() {
+
+  char tecla = teclado.getKey();
+
+  if (tecla) {
+
+    Serial.println(tecla);
+
+    
+    // LIMPIAR
+    
+    if (tecla == 'C') {
+
+      limpiarTodo();
+    }
+
+   
+    // NUMEROS
+    
+
+    else if (isDigit(tecla)) {
+
+      agregarNumero(tecla);
+    }
+
+    // OPERACIONES
+    
+    else if (
+      tecla == '+' ||
+      tecla == '-' ||
+      tecla == '*' ||
+      tecla == '/'
+    ) {
+
+      seleccionarOperacion(tecla);
+    }
+
+   
+    // RESULTADO
+    
+
+    else if (tecla == '=') {
+
+      calcularResultado();
+    }
+  }
+}
+
+
+// PANTALLA INICIO
+
+
+void pantallaInicio() {
+
+  lcd.clear();
+
+  lcd.setCursor(0,0);
+  lcd.print("CALCULADORA");
+
+  lcd.setCursor(0,1);
+  lcd.print("ASM AVR");
+
+  delay(2000);
+
+  lcd.clear();
+}
+
+
+// AGREGAR NUMEROS
+
+
+void agregarNumero(char tecla) {
+
+  if (!segundaParte) {
+
+    numero1 += tecla;
+
+  } else {
+
+    numero2 += tecla;
+  }
+
+  lcd.print(tecla);
+}
+
+
+// SELECCIONAR OPERACION
+
+void seleccionarOperacion(char tecla) {
+
+ 
+  // DOBLE * = POTENCIA
+ 
+
+  if (operacion == '*' && tecla == '*') {
+
+    operacion = '^';
+
+    lcd.clear();
+
+    lcd.print("POTENCIA");
+
+    delay(1000);
+
+    lcd.clear();
+
+    lcd.print(numero1);
+    lcd.print("^");
+
+    return;
+  }
+
+  
+  // DOBLE / = RAIZ
+ 
+
+  if (operacion == '/' && tecla == '/') {
+
+    operacion = 'R';
+
+    lcd.clear();
+
+    lcd.print("RAIZ");
+
+    delay(1000);
+
+    calcularResultado();
+
+    return;
+  }
+
+ 
+  // DOBLE + = PORCENTAJE
+
+
+  if (operacion == '+' && tecla == '+') {
+
+    operacion = '%';
+
+    lcd.clear();
+
+    lcd.print("PORCENTAJE");
+
+    delay(1000);
+
+    calcularResultado();
+
+    return;
+  }
+
+  
+  // DOBLE - = NEGATIVO
+  
+
+  if (operacion == '-' && tecla == '-') {
+
+    operacion = 'N';
+
+    lcd.clear();
+
+    lcd.print("NEGATIVO");
+
+    delay(1000);
+
+    calcularResultado();
+
+    return;
+  }
+
+  operacion = tecla;
+
+  segundaParte = true;
+
+  lcd.print(tecla);
+}
+
+
+// CALCULAR RESULTADO
+
+
+void calcularResultado() {
+
+  int n1 = numero1.toInt();
+  int n2 = numero2.toInt();
+
+  int tempResultado = 0;
+
+  lcd.clear();
+
+  switch (operacion) {
+
+    
+    // SUMA ASM
+    
+
+    case '+':
+
+      asm volatile(
+        "add %[a], %[b]"
+        : [a] "+r" (n1)
+        : [b] "r" (n2)
+      );
+
+      tempResultado = n1;
+
+      break;
+
+    
+    // RESTA ASM
+    
+    case '-':
+
+      asm volatile(
+        "sub %[a], %[b]"
+        : [a] "+r" (n1)
+        : [b] "r" (n2)
+      );
+
+      tempResultado = n1;
+
+      break;
+
+    
+    // MULTIPLICACION ASM
+    
+
+    case '*':
+
+      byte mult;
+
+      asm volatile(
+        "mul %[a], %[b]     \n"
+        "mov %[r], r0       \n"
+        : [r] "=r" (mult)
+        : [a] "r" ((byte)n1),
+          [b] "r" ((byte)n2)
+        : "r0", "r1"
+      );
+
+      tempResultado = mult;
+
+      break;
+
+    
+    // DIVISION ASM
+    
+
+    case '/':
+
+      if (n2 == 0) {
+
+        errorDivision();
+
+        return;
+      }
+
+      tempResultado = 0;
+
+      while (n1 >= n2) {
+
+        asm volatile(
+          "sub %[a], %[b]"
+          : [a] "+r" (n1)
+          : [b] "r" (n2)
+        );
+
+        tempResultado++;
+      }
+
+      break;
+
+   
+    // POTENCIA ASM
+    
+    case '^':
+
+      tempResultado = 1;
+
+      for (int i = 0; i < n2; i++) {
+
+        byte pot;
+
+        asm volatile(
+          "mul %[a], %[b]     \n"
+          "mov %[r], r0       \n"
+          : [r] "=r" (pot)
+          : [a] "r" ((byte)tempResultado),
+            [b] "r" ((byte)n1)
+          : "r0", "r1"
+        );
+
+        tempResultado = pot;
+      }
+
+      break;
+
+    
+    // RAIZ
+    
+
+    case 'R':
+
+      if (n1 < 0) {
+
+        errorRaiz();
+
+        return;
+      }
+
+      tempResultado = sqrt(n1);
+
+      break;
+
+    
+    // PORCENTAJE
+    
+    case '%':
+
+      tempResultado = n1 / 100;
+
+      break;
+
+    
+    // NEGATIVO ASM
+    
+
+    case 'N':
+
+      asm volatile(
+        "neg %[a]"
+        : [a] "+r" (n1)
+      );
+
+      tempResultado = n1;
+
+      break;
+
+    default:
+
+      lcd.print("OPERACION?");
+      return;
+  }
+
+  
+  // GUARDAR RESULTADO
+  
+  resultado = tempResultado;
+
+  memoria = resultado;
+
+ 
+  // MOSTRAR RESULTADO
+  
+  lcd.setCursor(0,0);
+
+  lcd.print("Resultado:");
+
+  lcd.setCursor(0,1);
+
+  lcd.print(resultado);
+
+  Serial.print("Resultado: ");
+  Serial.println(resultado);
+
+  delay(5000);
+
+  limpiarTodo();
+}
+
+
+// ERROR DIVISION
+
+
+void errorDivision() {
+
+  lcd.clear();
+
+  lcd.print("DIVISION 0");
+
+  Serial.println("ERROR DIVISION");
+
+  delay(3000);
+
+  limpiarTodo();
+}
+
+
+// ERROR RAIZ
+
+
+void errorRaiz() {
+
+  lcd.clear();
+
+  lcd.print("RAIZ INVALIDA");
+
+  Serial.println("ERROR RAIZ");
+
+  delay(3000);
+
+  limpiarTodo();
+}
+
+
+// LIMPIAR TODO
+
+
+void limpiarTodo() {
+
+  numero1 = "";
+  numero2 = "";
+
+  resultado = 0;
+
+  operacion = ' ';
+
+  segundaParte = false;
+
+  lcd.clear();
+}
+
+
+// MEMORIA
+
+
+int obtenerMemoria() {
+
+  return memoria;
+}
+
+
+// FACTORIAL
+
+
+long factorial(int n) {
+
+  long f = 1;
+
+  for (int i = 1; i <= n; i++) {
+
+    f *= i;
+  }
+
+  return f;
+}
+
+
+// LOGARITMO
+
+
+float logaritmo(float n) {
+
+  return log10(n);
+}
+
+
+// SENO
+
+
+float seno(float angulo) {
+
+  return sin(angulo);
+}
+
+
+// COSENO
+
+
+float coseno(float angulo) {
+
+  return cos(angulo);
+}
+
+
+// TANGENTE
+
+
+float tangente(float angulo) {
+
+  return tan(angulo);
+}
+
+
+// VALOR ABSOLUTO
+
+float absoluto(float n) {
+
+  return abs(n);
+}
+
+
+// NUMERO ALEATORIO
+
+int aleatorio() {
+
+  return random(1, 1000);
+}
